@@ -1,0 +1,3 @@
+put these to the windows live contacts folder. alongside wlcomm.exe
+
+those are from windows 10 LTSC. grab those from a Windows XP install to be sure.

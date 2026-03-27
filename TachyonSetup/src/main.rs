@@ -2,8 +2,7 @@
 
 use std::path::{self, Path, PathBuf};
 
-use adapter::bin_patcher::{patch_bytes, patch_string, read_string};
-use adapter::bin_patcher_error::BinPatcherError;
+
 use error::TachyonInstallerError;
 use nwd::{NwgPartial, NwgUi};
 use nwg::{Font, NativeUi};
@@ -15,9 +14,8 @@ use nwg::stretch::{
     geometry::{Rect, Size},
     style::{AlignSelf, Dimension as D, FlexDirection},
 };
-use registry::{Hive, Security};
+use registry::{Data, Hive, Security};
 
-mod adapter;
 mod error;
 use utfx::U16CString;
 
@@ -62,28 +60,30 @@ impl TachyonSetup {
             ));
 
         if let Ok(contact_dll_path) = contact_dll_path {
+
             if let Ok(path_data) = contact_dll_path.value("") {
                 let path_as_string = path_data.to_string();
                 let path = Path::new(path_as_string.as_str());
+                let contacts_folder = path.parent().unwrap().to_owned();
 
                 self.path_selection_page.path_label.set_text(
                     path.parent()
-                        .unwrap_or(Path::new("."))
+                        .unwrap()
                         .parent()
-                        .unwrap_or(Path::new("."))
+                        .unwrap()
                         .to_str()
                         .unwrap_or_default(),
                 );
                 self.path_selection_page
                     .found_label
-                    .set_text("Windows Live installation folder found ! :P");
+                    .set_text("Windows Live installation folder auto-detected !");
                 return;
             }
         }
 
         self.path_selection_page
             .found_label
-            .set_text("Windows Live installation folder not found ! :(");
+            .set_text("Windows Live installation folder not found !");
     }
 
     fn browse(&self) {
@@ -121,12 +121,12 @@ impl TachyonSetup {
             ));
         };
 
-        self.idcrl(&msnmsgr_exe_path)?;
+        //self.idcrl()?;
 
         Ok(())
     }
 
-    fn idcrl(&self, msnmsgr_exe_path: &PathBuf) -> Result<(), TachyonInstallerError> {
+    fn idcrl(&self) -> Result<(), TachyonInstallerError> {
         self.log("Creating Tachyon IDCRL environment".into());
 
         let idcrl_env_key = Hive::LocalMachine
@@ -143,34 +143,41 @@ impl TachyonSetup {
         tachyon_env_key.set_value(
             "RemoteFile",
             &registry::Data::String(
-                U16CString::from_str("http://127.0.0.1:8080/ppcrlconfig.srf").unwrap(),
+                U16CString::from_str("http://clientconfig.passport.net/PPCRLconfig.srf").unwrap(),
             ),
         )?;
         tachyon_env_key.set_value(
             "RemoteFileLink",
             &registry::Data::String(
-                U16CString::from_str("http://127.0.0.1:8080/wlidsvcconfig.xml").unwrap(),
+                U16CString::from_str("https://go.microsoft.com/fwlink/?LinkId=859524").unwrap(),
             ),
         )?;
 
-        let patch_addr = 0x3c750;
-        let idcrl_env = read_string(msnmsgr_exe_path, patch_addr, 10)?;
-
-        match idcrl_env.as_str() {
-            "Production" => {
-                self.log("Patching msnmsgr.exe idcrl environment".into());
-                patch_string(msnmsgr_exe_path, 0x3c750, "Tachyon\0\0\0".into())?;
-                let new_id_crl_env= read_string(msnmsgr_exe_path, 0x3c750, 10)?;
-                if new_id_crl_env != "Tachyon" { return Err(BinPatcherError::UnexpectedStringPatch { binary_path: msnmsgr_exe_path.to_string_lossy().into(), address: patch_addr, expected: "Tachyon".into(), actual: new_id_crl_env })? }
-            },
-            "Tachyon\0\0\0" => {
-                self.log("msnmsgr.exe idcrl environment was already patched, skipping...".into());
-            },
-            _ => {
-                return Err(BinPatcherError::UnexpectedBinaryStringContent { binary_path: msnmsgr_exe_path.to_string_lossy().into(), address: patch_addr, expected: "Production".into(), actual: idcrl_env })?;
-            }
-        }
         return Ok(());
+    }
+
+    fn comproxy(&self) -> Result<(), TachyonInstallerError> {
+        let clsid_path = Hive::ClassesRoot
+            .open(
+                "WOW6432Node\\CLSID",
+                Security::AllAccess,
+            )
+            .or(Hive::ClassesRoot.open(
+                "CLSID",
+                Security::AllAccess,
+            )).unwrap();
+
+        let proxy_clsid = clsid_path.create("{D86BCC3A-303F-41C9-AF6B-5E30C38FAF36}", Security::AllAccess)?;
+        proxy_clsid.set_value("",  &Data::String(U16CString::from_str("Windows Live Contact Database").unwrap()))?;
+        proxy_clsid.set_value("AppId",  &Data::String(U16CString::from_str("{D86BCC3A-303F-41C9-AF6B-5E30C38FAF36}").unwrap()))?;
+
+        let local_server = proxy_clsid.create("LocalServer32", Security::AllAccess)?;
+        local_server.set_value("",  &Data::String(U16CString::from_str(r#""C:\Program Files (x86)\Windows Live\Contacts\wlcomm-tachyon.exe""#).unwrap()))?;
+        local_server.set_value("ServerExecutable",  &Data::String(U16CString::from_str(r#"C:\Program Files (x86)\Windows Live\Contacts\wlcomm-tachyon.exe"#).unwrap()))?;
+
+
+        return Ok(());
+
     }
 
     fn log(&self, msg: String) {
@@ -186,7 +193,7 @@ pub struct PathSelectionPage {
     #[nwg_layout(flex_direction: FlexDirection::Column, max_size: Size{ width: D::Points(650.0), height: D::Points(100.0)})]
     layout: nwg::FlexboxLayout,
 
-    #[nwg_control(text: "Welcome to Tachyon Setup for WLM 2009", size:(650, 100), font: Some(&title_font()) )]
+    #[nwg_control(text: "Install Tachyon", size:(650, 100), font: Some(&title_font()) )]
     #[nwg_layout_item(layout: layout, size: Size{ width: D::Points(650.0), height: D::Points(100.0)})]
     title: nwg::Label,
 
@@ -201,7 +208,7 @@ pub struct PathSelectionPage {
     #[nwg_layout(flex_direction: FlexDirection::Row, align_items: stretch::style::AlignItems::Center, max_size: Size{ width: D::Points(650.0), height: D::Points(300.0)})]
     layout2: nwg::FlexboxLayout,
 
-    #[nwg_resource(title: "Open Messenger Folder", action: nwg::FileDialogAction::OpenDirectory)]
+    #[nwg_resource(title: "Target Windows Live folder", action: nwg::FileDialogAction::OpenDirectory)]
     dialog: nwg::FileDialog,
 
     #[nwg_control(text: "BLABLABLA", readonly: true)]
