@@ -25,6 +25,7 @@ use nwg::stretch::{
 };
 use registry::{Data, Hive, Security};
 use winapi::um::wingdi::{CreateSolidBrush, SetBkColor, SetBkMode, RGB, TRANSPARENT};
+use crate::process_service::ProcessService;
 
 extern crate native_windows_derive as nwd;
 extern crate native_windows_gui as nwg;
@@ -32,6 +33,7 @@ extern crate native_windows_gui as nwg;
 mod error;
 mod file_service;
 mod registry_service;
+mod process_service;
 
 lazy_static_include_bytes! {
     TACHYON_BANNER => "./img/tachyon_banner.bmp",
@@ -42,6 +44,15 @@ thread_local! {
     static GRAY_BRUSH: std::cell::Cell<HBRUSH> = std::cell::Cell::new(std::ptr::null_mut());
     static FRAME_HANDLERS: RefCell<Vec<nwg::RawEventHandler>> = RefCell::new(Vec::new());
 }
+
+const PT_20: D = D::Points(20.0);
+const PT_5: D = D::Points(5.0);
+const PADDING: Rect<D> = Rect{ start: PT_20, end: PT_20, top: PT_20, bottom: PT_20 };
+const MARGIN: Rect<D> = Rect{ start: PT_20, end: PT_20, top: PT_20, bottom: PT_20 };
+
+const MARGIN_TOP_20: Rect<D> = Rect{ start: D::Points(0.0), end: D::Points(0.0), top: PT_20, bottom: D::Points(0.0) };
+const MARGIN_TOP_40: Rect<D> = Rect{ start: D::Points(0.0), end: D::Points(0.0), top: D::Points(40.0), bottom: D::Points(0.0) };
+
 
 #[derive(Default, NwgUi)]
 pub struct TachyonSetup {
@@ -77,9 +88,17 @@ pub struct TachyonSetup {
     #[nwg_partial(parent: progress_frame)]
     progress_page: ProgressPage,
 
-    #[nwg_control(text: "Next", size: (150, 34), position: (484, 458))]
+    #[nwg_control(text: "Back", size: (100, 30), position: (320, 460), enabled: false)]
+    #[nwg_events( OnButtonClick: [TachyonSetup::back(RC_SELF)] )]
+    back_button: nwg::Button,
+
+    #[nwg_control(text: "Next", size: (100, 30), position: (420, 460))]
     #[nwg_events( OnButtonClick: [TachyonSetup::next_page(RC_SELF)] )]
     next_button: nwg::Button,
+
+    #[nwg_control(text: "Cancel", size: (100, 30), position: (540, 460))]
+    #[nwg_events( OnButtonClick: [TachyonSetup::cancel(RC_SELF)] )]
+    cancel_button: nwg::Button,
 }
 
 impl TachyonSetup {
@@ -88,6 +107,7 @@ impl TachyonSetup {
     }
 
     fn on_init(&self) {
+
 
         let white = ensure_brush(&WHITE_BRUSH, (255, 255, 255));
         // for the footer
@@ -115,7 +135,7 @@ impl TachyonSetup {
         match RegistryService::find_installation_path() {
             Err(_) => {
                 self.path_selection_page
-                    .found_label
+                    .desc
                     .set_text("Windows Live Messenger installation folder not found.");
 
                 self.path_selection_page.desc.set_text("Could not detect Windows Live Messenger Installation folder.")
@@ -127,12 +147,14 @@ impl TachyonSetup {
                             install_path.to_str().expect("Path to be valid at this point"),
                         );
                         self.path_selection_page
-                            .found_label
-                            .set_text("Windows Live installation folder auto-detected !");
+                            .desc
+                            .set_text("Found Windows Live Messenger 2009 folder:");
+
+                        self.path_selection_page.next_label.set_visible(true);
                     }
                     _ => {
                         self.path_selection_page
-                            .found_label
+                            .desc
                             .set_text("Windows Live Messenger installation folder not found.");
 
                         self.path_selection_page.desc.set_text("Found invalid Windows Live Messenger installation folder. Please reinstall Windows Live Messenger 14 and try again.")
@@ -144,18 +166,53 @@ impl TachyonSetup {
         }
     }
 
+    fn cancel(&self) {
+        nwg::stop_thread_dispatch();
+    }
+
+    fn back(&self) {
+    match self.current_page.get() {
+            1 => {
+                self.back_button.set_enabled(false);
+                self.welcome_frame.set_visible(true);
+                self.path_selection_frame.set_visible(false);
+                self.current_page.set(0);
+            }
+            2 => {}
+            _ => {}
+    }
+    }
+
     fn next_page(&self) {
         match self.current_page.get() {
             0 => {
+                self.back_button.set_enabled(true);
                 self.welcome_frame.set_visible(false);
                 self.path_selection_frame.set_visible(true);
                 self.current_page.set(1);
             }
             1 => {
+                if let Ok(processes) = ProcessService::get_blocking_running_processes() {
+                    if !processes.is_empty() {
+
+                        let mut message = "Oof ! Windows Live Messenger is currently running.\r\nPlease close it before continuing.\r\n\r\nThe following processes must be stopped during setup:\n\n".to_string();
+                        for process in processes {
+                            message.push_str(&format!("- {}\n", process));
+                        }
+                        nwg::modal_info_message(&self.window, "Windows Live Messenger is running", &message);
+
+                        return;
+                    }
+                }
+
                 self.path_selection_frame.set_visible(false);
                 self.progress_frame.set_visible(true);
                 self.current_page.set(2);
+                self.back_button.set_enabled(false);
+                self.next_button.set_enabled(false);
+                self.cancel_button.set_enabled(false);
                 self.install();
+                self.next_button.set_enabled(true);
             }
             _ => {}
         }
@@ -184,6 +241,7 @@ impl TachyonSetup {
             self.log(msg);
         };
 
+        return Ok(());
 
         if FileService::is_installed(wl_install_folder_path) {
             self.log("Found older install. Cleaning up...".into());
@@ -207,10 +265,15 @@ impl TachyonSetup {
 
 #[derive(Default, NwgPartial)]
 pub struct WelcomePage {
-    #[nwg_control(text: "Welcome to the Tachyon Setup Wizard", size: (460, 150), position: (25, 20), font: Some(&title_font()), background_color: Some([255, 255, 255]))]
+    #[nwg_layout(flex_direction: FlexDirection::Column, padding: PADDING)]
+    layout: nwg::FlexboxLayout,
+
+    #[nwg_control(text: "Welcome to the Tachyon Setup Wizard", font: Some(&title_font()))]
+    #[nwg_layout_item(layout: layout, size: Size{ width: D::Points(450.0), height: D::Points(30.0)})]
     title: nwg::Label,
 
-    #[nwg_control(text: "This wizard will install Tachyon on your computer.\r\n\r\nTachyon is a compatibility portal that turns Windows Live \r\nMessenger into a Matrix client.\r\n\r\nA valid install of Windows Live Messenger 2009 (14.0) is required.\r\n\r\nTo continue, click Next.", size: (460, 280), position: (25, 190), font: Some(&desc_font()), background_color: Some([255, 255, 255]))]
+    #[nwg_control(text: "This wizard will install Tachyon on your computer.\r\n\r\nTachyon is a compatibility portal that turns Windows Live \r\nMessenger into a Matrix client.\r\n\r\nA valid install of Windows Live Messenger 2009 (14.0) is required.\r\n\r\nTo continue, click Next.", font: Some(&desc_font()), background_color: Some([255, 255, 255]))]
+    #[nwg_layout_item(layout: layout, margin: MARGIN_TOP_20,  size: Size{ width: D::Points(450.0), height: D::Points(180.0)})]
     desc: nwg::Label,
 }
 
@@ -218,27 +281,24 @@ impl WelcomePage {}
 
 #[derive(Default, NwgPartial)]
 pub struct PathSelectionPage {
-    #[nwg_layout(flex_direction: FlexDirection::Column, max_size: Size{ width: D::Points(650.0), height: D::Points(100.0)})]
+    #[nwg_layout(flex_direction: FlexDirection::Column, padding: PADDING)]
     layout: nwg::FlexboxLayout,
 
-    #[nwg_control(text: "Install Tachyon", size:(650, 100), font: Some(&title_font()) )]
-    #[nwg_layout_item(layout: layout, size: Size{ width: D::Points(650.0), height: D::Points(100.0)})]
+    #[nwg_control(text: "Install Location", font: Some(&title_font()), background_color: Some([255, 255, 255]))]
+    #[nwg_layout_item(layout: layout, size: Size{ width: D::Points(450.0), height: D::Points(30.0)})]
     title: nwg::Label,
 
-    #[nwg_control(text: "Please select your Windows Live installation folder...", font: Some(&desc_font()) )]
-    #[nwg_layout_item(layout: layout, size: Size{ width: D::Points(650.0), height: D::Points(100.0)})]
+    #[nwg_control(text: "", font: Some(&desc_font()), background_color: Some([255, 255, 255]))]
+    #[nwg_layout_item(layout: layout, margin: MARGIN_TOP_20, size: Size{ width: D::Points(450.0), height: D::Points(30.0)})]
     desc: nwg::Label,
 
-    #[nwg_control(text: "", font: Some(&desc_font()) )]
-    #[nwg_layout_item(layout: layout, size: Size{ width: D::Points(650.0), height: D::Points(100.0)})]
-    found_label: nwg::Label,
-
-    #[nwg_layout(flex_direction: FlexDirection::Row, align_items: stretch::style::AlignItems::Center, max_size: Size{ width: D::Points(650.0), height: D::Points(300.0)})]
-    layout2: nwg::FlexboxLayout,
-
-    #[nwg_control(text: "", readonly: true)]
-    #[nwg_layout_item(layout: layout2, size: Size{ width: D::Points(540.0), height: D::Points(30.0)})]
+    #[nwg_control(text: "", readonly: true, background_color: Some([255, 255, 255]))]
+    #[nwg_layout_item(layout: layout, margin: MARGIN_TOP_40, size: Size{ width: D::Points(450.0), height: D::Points(30.0)})]
     path_label: nwg::TextInput,
+
+    #[nwg_control(flags: "NONE", text: "To proceed with the install, click Next.", font: Some(&desc_font()), background_color: Some([255, 255, 255]))]
+    #[nwg_layout_item(layout: layout, margin: MARGIN_TOP_20, size: Size{ width: D::Points(450.0), height: D::Points(30.0)})]
+    next_label: nwg::Label,
 
 }
 

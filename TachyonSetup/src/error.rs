@@ -9,6 +9,8 @@ pub enum TachyonInstallerError {
     PathNotExist(String),
     #[error("Could not create file: {}", .0)]
     CouldNotCreateFile(#[from] std::io::Error),
+    #[error("Could not enumerate running processes")]
+    EnumerateProcess,
     #[error("Invalid path: {:?}", .0)]
     InvalidPath(Option<String>),
 }
