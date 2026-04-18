@@ -1,8 +1,10 @@
 #![windows_subsystem = "windows"]
 
+use std::fs::File;
+use std::io::Write;
 use std::path::{self, Path, PathBuf};
-
-
+use lazy_static::lazy_static;
+use lazy_static_include::lazy_static_include_bytes;
 use error::TachyonInstallerError;
 use nwd::{NwgPartial, NwgUi};
 use nwg::{Font, NativeUi};
@@ -17,7 +19,14 @@ use nwg::stretch::{
 use registry::{Data, Hive, Security};
 
 mod error;
+mod file_service;
+mod registry_service;
+
 use utfx::U16CString;
+use winapi::shared::windef::RECT;
+use winapi::um::winuser::GetWindowRect;
+use crate::file_service::FileService;
+use crate::registry_service::RegistryService;
 
 #[derive(Default, NwgUi)]
 pub struct TachyonSetup {
@@ -29,7 +38,6 @@ pub struct TachyonSetup {
     path_selection_frame: nwg::Frame,
 
     #[nwg_partial(parent: path_selection_frame)]
-    #[nwg_events( (browse_btn, OnButtonClick): [TachyonSetup::browse(RC_SELF)] )]
     path_selection_page: PathSelectionPage,
 
     #[nwg_control(flags: "NONE", parent: window, size: (650, 450))]
@@ -37,7 +45,7 @@ pub struct TachyonSetup {
 
     #[nwg_partial(parent: progress_frame)]
     progress_page: ProgressPage,
-
+    
     #[nwg_control(text: "Next", size: (280, 50), position: (0, 500))]
     #[nwg_events( OnButtonClick: [TachyonSetup::next_page(RC_SELF)] )]
     next_button: nwg::Button,
@@ -49,50 +57,39 @@ impl TachyonSetup {
     }
 
     fn on_init(&self) {
-        let contact_dll_path = Hive::ClassesRoot
-            .open(
-                "WOW6432Node\\CLSID\\{5FCAA434-4EB1-4BEA-B64D-51917E233068}\\InprocServer32",
-                Security::Read,
-            )
-            .or(Hive::ClassesRoot.open(
-                "CLSID\\{5FCAA434-4EB1-4BEA-B64D-51917E233068}\\InprocServer32",
-                Security::Read,
-            ));
 
-        if let Ok(contact_dll_path) = contact_dll_path {
-
-            if let Ok(path_data) = contact_dll_path.value("") {
-                let path_as_string = path_data.to_string();
-                let path = Path::new(path_as_string.as_str());
-                let contacts_folder = path.parent().unwrap().to_owned();
-
-                self.path_selection_page.path_label.set_text(
-                    path.parent()
-                        .unwrap()
-                        .parent()
-                        .unwrap()
-                        .to_str()
-                        .unwrap_or_default(),
-                );
+        match RegistryService::find_installation_path() {
+            Err(_) => {
                 self.path_selection_page
                     .found_label
-                    .set_text("Windows Live installation folder auto-detected !");
-                return;
+                    .set_text("Windows Live Messenger installation folder not found.");
+                
+                self.path_selection_page.desc.set_text("Could not detect Windows Live Messenger Installation folder.")
+            }
+            Ok(install_path) => {
+                match FileService::is_valid_install_folder(&install_path) {
+                    Ok(true) => {
+                        self.path_selection_page.path_label.set_text(
+                            install_path.to_str().expect("Path to be valid at this point"),
+                        );
+                        self.path_selection_page
+                            .found_label
+                            .set_text("Windows Live installation folder auto-detected !");
+                    }
+                    _ => {
+                        self.path_selection_page
+                            .found_label
+                            .set_text("Windows Live Messenger installation folder not found.");
+
+                        self.path_selection_page.desc.set_text("Found invalid Windows Live Messenger installation folder. Please reinstall Windows Live Messenger 14 and try again.")
+                    }
+                }
+                
+
             }
         }
-
-        self.path_selection_page
-            .found_label
-            .set_text("Windows Live installation folder not found !");
     }
-
-    fn browse(&self) {
-        self.path_selection_page
-            .dialog
-            .set_default_folder(self.path_selection_page.path_label.text().as_str());
-        let test = self.path_selection_page.dialog.run(Some(&self.window));
-    }
-
+    
     fn next_page(&self) {
         self.path_selection_frame.set_visible(false);
         self.progress_frame.set_visible(true);
@@ -101,83 +98,41 @@ impl TachyonSetup {
 
     fn install(&self) {
         let wl_install_folder_path: PathBuf = self.path_selection_page.path_label.text().into();
+        let log_function = |msg| {
+            self.log(msg);
+        };
+
         match self.do_stuff(&wl_install_folder_path) {
             Ok(..) => {
                 self.log("All good".into());
             }
             Err(e) => {
                 self.log(format!("Error: {}", e));
+                let _ = FileService::uninstall(&wl_install_folder_path, log_function);
+                let _ = RegistryService::uninstall(log_function);
             }
         }
     }
 
     fn do_stuff(&self, wl_install_folder_path: &PathBuf) -> Result<(), TachyonInstallerError> {
-        let msgr_install_folder_path = wl_install_folder_path.join("Messenger");
-        let msnmsgr_exe_path = msgr_install_folder_path.join("msnmsgr.exe");
-
-        if !msnmsgr_exe_path.is_file() {
-            return Err(TachyonInstallerError::PathNotExist(
-                msnmsgr_exe_path.to_string_lossy().into(),
-            ));
+        let log_function = |msg| {
+            self.log(msg);
         };
 
-        //self.idcrl()?;
+
+        if FileService::is_installed(wl_install_folder_path) {
+            self.log("Found older install. Cleaning up...".into());
+            let _ = FileService::uninstall(wl_install_folder_path, log_function);
+            let _ = RegistryService::uninstall(log_function);
+        }
+
+
+        self.log("Installing new files...".into());
+        FileService::install(wl_install_folder_path, log_function)?;
+        RegistryService::install(wl_install_folder_path, log_function)?;
+
 
         Ok(())
-    }
-
-    fn idcrl(&self) -> Result<(), TachyonInstallerError> {
-        self.log("Creating Tachyon IDCRL environment".into());
-
-        let idcrl_env_key = Hive::LocalMachine
-            .open(
-                "SOFTWARE\\WOW6432Node\\Microsoft\\IdentityCRL\\Environment",
-                Security::AllAccess,
-            )
-            .or(Hive::LocalMachine.open(
-                "SOFTWARE\\Microsoft\\IdentityCRL\\Environment",
-                Security::AllAccess,
-            ))?;
-
-        let tachyon_env_key = idcrl_env_key.create("Tachyon", Security::AllAccess)?;
-        tachyon_env_key.set_value(
-            "RemoteFile",
-            &registry::Data::String(
-                U16CString::from_str("http://clientconfig.passport.net/PPCRLconfig.srf").unwrap(),
-            ),
-        )?;
-        tachyon_env_key.set_value(
-            "RemoteFileLink",
-            &registry::Data::String(
-                U16CString::from_str("https://go.microsoft.com/fwlink/?LinkId=859524").unwrap(),
-            ),
-        )?;
-
-        return Ok(());
-    }
-
-    fn comproxy(&self) -> Result<(), TachyonInstallerError> {
-        let clsid_path = Hive::ClassesRoot
-            .open(
-                "WOW6432Node\\CLSID",
-                Security::AllAccess,
-            )
-            .or(Hive::ClassesRoot.open(
-                "CLSID",
-                Security::AllAccess,
-            )).unwrap();
-
-        let proxy_clsid = clsid_path.create("{D86BCC3A-303F-41C9-AF6B-5E30C38FAF36}", Security::AllAccess)?;
-        proxy_clsid.set_value("",  &Data::String(U16CString::from_str("Windows Live Contact Database").unwrap()))?;
-        proxy_clsid.set_value("AppId",  &Data::String(U16CString::from_str("{D86BCC3A-303F-41C9-AF6B-5E30C38FAF36}").unwrap()))?;
-
-        let local_server = proxy_clsid.create("LocalServer32", Security::AllAccess)?;
-        local_server.set_value("",  &Data::String(U16CString::from_str(r#""C:\Program Files (x86)\Windows Live\Contacts\wlcomm-tachyon.exe""#).unwrap()))?;
-        local_server.set_value("ServerExecutable",  &Data::String(U16CString::from_str(r#"C:\Program Files (x86)\Windows Live\Contacts\wlcomm-tachyon.exe"#).unwrap()))?;
-
-
-        return Ok(());
-
     }
 
     fn log(&self, msg: String) {
@@ -208,16 +163,10 @@ pub struct PathSelectionPage {
     #[nwg_layout(flex_direction: FlexDirection::Row, align_items: stretch::style::AlignItems::Center, max_size: Size{ width: D::Points(650.0), height: D::Points(300.0)})]
     layout2: nwg::FlexboxLayout,
 
-    #[nwg_resource(title: "Target Windows Live folder", action: nwg::FileDialogAction::OpenDirectory)]
-    dialog: nwg::FileDialog,
-
-    #[nwg_control(text: "BLABLABLA", readonly: true)]
-    #[nwg_layout_item(layout: layout2, size: Size{ width: D::Points(540.0), height: D::Auto})]
+    #[nwg_control(text: "", readonly: true)]
+    #[nwg_layout_item(layout: layout2, size: Size{ width: D::Points(540.0), height: D::Points(30.0)})]
     path_label: nwg::TextInput,
 
-    #[nwg_control(text: "Browse")]
-    #[nwg_layout_item(layout: layout2, size: Size{ width: D::Points(90.0), height: D::Points(30.0)})]
-    browse_btn: nwg::Button,
 }
 
 impl PathSelectionPage {}
@@ -244,6 +193,8 @@ pub struct ProgressPage {
     logs: nwg::TextBox,
 }
 
+
+
 impl ProgressPage {}
 
 fn title_font() -> Font {
@@ -251,7 +202,7 @@ fn title_font() -> Font {
     nwg::FontBuilder::new()
         .family("Segoe UI")
         .size(28)
-        .build(&mut font);
+        .build(&mut font).expect("TODO: panic message");
     return font;
 }
 

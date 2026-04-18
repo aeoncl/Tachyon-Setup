@@ -7,4 +7,8 @@ pub enum TachyonInstallerError {
     RegistryValue(#[from] registry::value::Error),
     #[error("Path doesn't exist: {}", .0)]
     PathNotExist(String),
+    #[error("Could not create file: {}", .0)]
+    CouldNotCreateFile(#[from] std::io::Error),
+    #[error("Invalid path: {:?}", .0)]
+    InvalidPath(Option<String>),
 }
