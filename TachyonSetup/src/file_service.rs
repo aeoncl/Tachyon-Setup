@@ -87,26 +87,25 @@ impl FileService {
     }
 
     pub fn is_valid_install_folder(path: &PathBuf) -> Result<bool, TachyonInstallerError> {
-        return Ok(false);
         let contacts_path = path.join("Contacts");
         let messenger_path = path.join("Messenger");
 
         if !contacts_path.exists() || !messenger_path.exists() {
             return Ok(false);
         }
-        
+
         let messenger_folder_content = messenger_path.read_dir()?;
-        
+
         for messenger_file in messenger_folder_content.filter_map(|messenger_file| messenger_file.ok()) {
             let messenger_file = messenger_file.file_name();
             if let Some(messenger_file) = messenger_file.to_str() {
-                if messenger_file == "msgrapp.14.0.8117.0416.dll" {
+                if messenger_file.starts_with("msgrapp.14.0") {
                     return Ok(true);
                 }
             }
         }
-        
-      Ok(false)
+
+        Ok(false)
     }
 
     pub fn is_installed(path: &PathBuf) -> bool {
@@ -129,11 +128,11 @@ impl FileService {
 
     fn write_contact_files(path: &Path, log: impl Fn(String)) -> Result<(), TachyonInstallerError> {
         log("Supercharging Windows Live Contacts files.".into());
-        
+
         for file_entry in CONTACT_FILES.iter() {
             Self::write_file(path, file_entry, &log)?;
         }
-        
+
         Ok(())
     }
 

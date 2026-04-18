@@ -36,11 +36,11 @@ impl RegistryService {
                 Security::Read,
             ))?;
 
-            let path_data = contact_dll_path.value("")?;
-            let path_as_string = path_data.to_string();
-            let path = PathBuf::from(path_as_string);
-            let contacts_folder = path.parent().ok_or(TachyonInstallerError::PathNotExist(format!("Invalid Contacts Path from Registry: {}", &path.as_display())))?;
-            let msn_msgr_install_folder = contacts_folder.parent().ok_or(TachyonInstallerError::PathNotExist(format!("Invalid WLM Install Path from Registry: {}", &contacts_folder.as_display())))?;
+        let path_data = contact_dll_path.value("")?;
+        let path_as_string = path_data.to_string();
+        let path = PathBuf::from(path_as_string);
+        let contacts_folder = path.parent().ok_or(TachyonInstallerError::PathNotExist(format!("Invalid Contacts Path from Registry: {}", &path.as_display())))?;
+        let msn_msgr_install_folder = contacts_folder.parent().ok_or(TachyonInstallerError::PathNotExist(format!("Invalid WLM Install Path from Registry: {}", &contacts_folder.as_display())))?;
         Ok(msn_msgr_install_folder.to_path_buf())
     }
 

@@ -16,7 +16,7 @@ thiserror = "1.0.50"
 winres = "0.1.12"
 lazy_static = "1.5.0"
 lazy-static-include = "3.2.1"
-winapi = { version = "0.3", features = ["winuser", "windef"] }
+winapi = { version = "0.3", features = ["winuser", "windef", "wingdi", "minwindef"] }
 
 
 [build-dependencies]
