@@ -25,6 +25,8 @@ impl RegistryService {
         let contacts_path = install_path.join("Contacts");
         Self::write_contact_com_proxy_registry_keys(contacts_path.as_path(), &log)?;
         progress();
+        Self::disable_windows_live_messenger_auto_startup(&log)?;
+        progress();
         Ok(())
     }
 
@@ -232,6 +234,45 @@ impl RegistryService {
             key.delete_self(false)?;
         } else {
             log("Uninstall registry entry not found. Skipping...".into());
+        }
+        Ok(())
+    }
+
+    pub fn disable_windows_live_messenger_auto_startup(log: impl Fn(String)) -> Result<(), TachyonInstallerError> {
+        log("Disabling Windows Live Messenger Auto Startup".into());
+        let users = Hive::Users.open("", Security::Read)?;
+        for user_sid in users.keys() {
+            if let Ok(user_sid) = user_sid {
+                let user = user_sid.to_string();
+                if user.starts_with(".DEFAULT") {
+                    continue;
+                }
+
+                //Disable Windows run auto start entry
+                let run_path = format!("{}\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", user_sid.to_string());
+                if let Ok(run) = Hive::Users.open(&run_path, Security::AllAccess) {
+                    let _ = run.delete_value("msnmsgr");
+                }
+
+                //Disable WLM Setting
+                let msn_msgr_key = Hive::CurrentUser.open(
+                    "Software\\Microsoft\\MSNMessenger",
+                    Security::AllAccess,
+                );
+
+                if let Ok(msn_msgr_key) = msn_msgr_key {
+                    match msn_msgr_key.value("AppSettings") {
+                        Ok(Data::Binary(bytes)) => {
+                            let mut new_bytes = bytes.clone();
+                            new_bytes[1] &= !0x02;
+                            msn_msgr_key.set_value("AppSettings", &Data::Binary(new_bytes))?;
+                        }
+                        _ =>{}
+                    };
+
+                }
+
+            }
         }
         Ok(())
     }
