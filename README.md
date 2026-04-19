@@ -30,3 +30,7 @@ It composed of three rust crates:
 1. Install Windows Live Messenger 2009 (14.0)
 2. Run the installer
 3. Run Windows Live Messenger (Tachyon)
+
+## Log-in
+You can connect to Windows Live Messenger using your matrix id in an email format: `{user_id}@server`
+If your password is longer than the 16 characters WLM gives us, you can type `tachyon` as the password, you will be able to login through a web page served locally, and then reconnect through the client.
