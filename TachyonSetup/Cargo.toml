@@ -17,6 +17,7 @@ winres = "0.1.12"
 lazy_static = "1.5.0"
 lazy-static-include = "3.2.1"
 winapi = { version = "0.3", features = ["winuser", "wingdi", "windef", "minwindef", "tlhelp32", "handleapi"] }
+directories = "6.0.0"
 
 
 [build-dependencies]

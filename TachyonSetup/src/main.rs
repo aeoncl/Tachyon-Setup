@@ -26,6 +26,7 @@ use nwg::stretch::{
 use registry::{Data, Hive, Security};
 use winapi::um::wingdi::{CreateSolidBrush, SetBkColor, SetBkMode, RGB, TRANSPARENT};
 use crate::process_service::ProcessService;
+use crate::worker::{InstallMessage, Reporter};
 
 extern crate native_windows_derive as nwd;
 extern crate native_windows_gui as nwg;
@@ -34,6 +35,7 @@ mod error;
 mod file_service;
 mod registry_service;
 mod process_service;
+mod worker;
 
 lazy_static_include_bytes! {
     TACHYON_BANNER => "./img/tachyon_banner.bmp",
@@ -61,6 +63,12 @@ pub struct TachyonSetup {
     window: nwg::Window,
 
     current_page: std::cell::Cell<u8>,
+
+    #[nwg_control]
+    #[nwg_events(OnNotice: [TachyonSetup::on_worker_message(SELF)])]
+    install_notice: nwg::Notice,
+
+    install_receiver: RefCell<Option<std::sync::mpsc::Receiver<InstallMessage>>>,
 
     // Banner — persistent across all pages
     #[nwg_resource(source_bin: Some(&*TACHYON_BANNER))]
@@ -106,8 +114,7 @@ impl TachyonSetup {
         nwg::stop_thread_dispatch();
     }
 
-    fn on_init(&self) {
-
+    fn paint_background_colors(&self) {
 
         let white = ensure_brush(&WHITE_BRUSH, (255, 255, 255));
         // for the footer
@@ -131,6 +138,10 @@ impl TachyonSetup {
                              RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
             }
         }
+    }
+
+    fn on_init(&self) {
+        self.paint_background_colors();
 
         match RegistryService::find_installation_path() {
             Err(_) => {
@@ -211,63 +222,125 @@ impl TachyonSetup {
                 self.back_button.set_enabled(false);
                 self.next_button.set_enabled(false);
                 self.cancel_button.set_enabled(false);
-                self.install();
-                self.next_button.set_enabled(true);
+                self.start_install_task();
+            }
+            2 => {
+                nwg::stop_thread_dispatch();
             }
             _ => {}
         }
     }
 
-    fn install(&self) {
+    fn start_install_task(&self) {
         let wl_install_folder_path: PathBuf = self.path_selection_page.path_label.text().into();
-        let log_function = |msg| {
-            self.log(msg);
-        };
+        let (tx, rx) = std::sync::mpsc::channel::<InstallMessage>();
+        *self.install_receiver.borrow_mut() = Some(rx);
 
-        match self.do_stuff(&wl_install_folder_path) {
-            Ok(..) => {
-                self.log("All good".into());
+        let reporter = Reporter::new(tx.clone(), self.install_notice.sender());
+        let sender = self.install_notice.sender();
+
+        std::thread::spawn(move || {
+            let result = Self::do_stuff_worker(&wl_install_folder_path, &reporter);
+
+            match result {
+                Ok(()) => {
+                    let _ = tx.send(InstallMessage::Done);
+                }
+                Err(e) => {
+                    let _ = tx.send(InstallMessage::Error(format!("{}", e)));
+                }
             }
-            Err(e) => {
-                self.log(format!("Error: {}", e));
-                let _ = FileService::uninstall(&wl_install_folder_path, log_function);
-                let _ = RegistryService::uninstall(log_function);
-            }
-        }
+            sender.notice();
+        });
     }
 
-    fn do_stuff(&self, wl_install_folder_path: &PathBuf) -> Result<(), TachyonInstallerError> {
-        let log_function = |msg| {
-            self.log(msg);
-        };
-
-        let progress_function = || {
-            self.progress_page.progress_bar.advance();
-        };
+    fn do_stuff_worker(
+        wl_install_folder_path: &PathBuf,
+        reporter: &Reporter,
+    ) -> Result<(), TachyonInstallerError> {
+        let log_fn = |msg| reporter.log(msg);
+        let progress_fn = || reporter.progress();
 
         if FileService::is_installed(wl_install_folder_path) {
-            self.log("Found older install. Cleaning up...".into());
-            let _ = FileService::uninstall(wl_install_folder_path, log_function);
-            let _ = RegistryService::uninstall(log_function);
+            reporter.log("Found older install. Cleaning up...".into());
+            let _ = FileService::uninstall(wl_install_folder_path, log_fn);
+            let _ = RegistryService::uninstall(log_fn);
         }
 
-        self.log("Installing new files...".into());
-        FileService::install(wl_install_folder_path, log_function, progress_function)?;
-        RegistryService::install(wl_install_folder_path, log_function, progress_function)?;
+        let rollback_and_fail = |e: TachyonInstallerError| -> TachyonInstallerError {
+            reporter.log(format!("Install failed: {}. Rolling back...", e));
+            let _ = FileService::uninstall(wl_install_folder_path, log_fn);
+            let _ = RegistryService::uninstall(log_fn);
+            e
+        };
 
-        self.log("Stalling for a bit so we pretend that we are a serious installer.".into());
-        progress_function();
+        reporter.log("Installing new files...".into());
+        FileService::install(wl_install_folder_path, log_fn, progress_fn)
+            .map_err(rollback_and_fail)?;
+        RegistryService::install(wl_install_folder_path, log_fn, progress_fn)
+            .map_err(rollback_and_fail)?;
+
+        reporter.log("Stalling for a bit so we pretend that we are a serious installer.".into());
+        reporter.progress();
         std::thread::sleep(std::time::Duration::from_secs(1));
-        self.log("Reticulating message splines.".into());
-        progress_function();
+
+        reporter.log("Reticulating message splines.".into());
+        reporter.progress();
         std::thread::sleep(std::time::Duration::from_secs(1));
-        self.log("Unzuckerberging your dms.".into());
+
+        reporter.log("Unzuckerberging your dms.".into());
         std::thread::sleep(std::time::Duration::from_secs(1));
-        self.log("Advancing the bar to the end for no reason...".into());
-        let range = self.progress_page.progress_bar.range();
-        self.progress_page.progress_bar.advance_delta(range.end);
+
+        reporter.log("Advancing the bar to the end for no reason...".into());
+        reporter.progress_to_end();
 
         Ok(())
+    }
+
+    fn on_worker_message(&self) {
+        let mut finished = false;
+        
+        {
+            let receiver = self.install_receiver.borrow();
+            let rx = match receiver.as_ref() {
+                Some(rx) => rx,
+                None => return,
+            };
+
+            while let Ok(msg) = rx.try_recv() {
+                match msg {
+                    InstallMessage::Log(s) => {
+                        self.progress_page.logs.appendln(&s);
+                    }
+                    InstallMessage::Progress => {
+                        self.progress_page.progress_bar.advance();
+                    }
+                    InstallMessage::ProgressToEnd => {
+                        let range = self.progress_page.progress_bar.range();
+                        self.progress_page.progress_bar.advance_delta(range.end);
+                    }
+                    InstallMessage::Done => {
+                        self.progress_page.logs.appendln("Installation complete.");
+                        self.progress_page.title.set_text("Installation complete");
+                        self.next_button.set_text("Finish");
+                        self.next_button.set_enabled(true);
+                        self.cancel_button.set_enabled(true);
+                        finished = true;
+                    }
+                    InstallMessage::Error(e) => {
+                        self.progress_page.logs.appendln(&format!("An error has occured while installing:\r\n{}", e));
+                        self.next_button.set_text("Close");
+                        self.next_button.set_enabled(true);
+                        self.cancel_button.set_enabled(true);
+                        finished = true;
+                    }
+                }
+            }
+        }
+
+        if finished {
+            *self.install_receiver.borrow_mut() = None;
+        }
     }
 
     fn log(&self, msg: String) {

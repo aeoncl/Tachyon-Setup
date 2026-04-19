@@ -1,11 +1,9 @@
+use crate::error::TachyonInstallerError;
+use lazy_static::lazy_static;
+use lazy_static_include::lazy_static_include_bytes;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use lazy_static::lazy_static;
-use lazy_static_include::lazy_static_include_bytes;
-use registry::{Data, Hive, Security};
-use utfx::U16CString;
-use crate::error::TachyonInstallerError;
 
 lazy_static_include_bytes! {
     DRAAL => "./assets/draal.exe",
@@ -82,7 +80,7 @@ impl FileService {
         Self::remove_msnmsgr_files(&messenger_path, &log)?;
         let contacts_path = path.join("Contacts");
         Self::remove_contact_files(&contacts_path, &log)?;
-
+        Self::remove_tachyon_idcrl_files(&log)?;
         Ok(())
     }
 
@@ -122,7 +120,7 @@ impl FileService {
     }
 
     fn write_file(parent_path: &Path, file_entry: &FileEntry, log: impl Fn(String)) -> Result<(), TachyonInstallerError> {
-        log(format!("Write: {}", file_entry.name).into());
+        log(format!("Write file: {}\\{}", parent_path.to_string_lossy(), file_entry.name).into());
         file_entry.write_to_disk(parent_path)
     }
 
@@ -181,6 +179,17 @@ impl FileService {
         Ok(())
     }
 
-
-
+    fn remove_tachyon_idcrl_files(log: impl Fn(String)) -> Result<(), TachyonInstallerError> {
+        log("Removing Tachyon IdentityCRL files.".into());
+        let project_dir = directories::ProjectDirs::from("", "Microsoft","IdentityCRL");
+        if let Some(project_dir) = project_dir {
+            let tachyon_idcrl_dir = project_dir.data_dir().parent().map(|p| p.join("Tachyon"));
+            if let Some(tachyon_idcrl_dir) = tachyon_idcrl_dir{
+                if tachyon_idcrl_dir.exists() {
+                    std::fs::remove_dir_all(tachyon_idcrl_dir)?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
