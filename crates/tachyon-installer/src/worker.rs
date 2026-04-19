@@ -12,11 +12,10 @@ pub struct Reporter {
 }
 
 impl Reporter {
-    
-    pub(crate) fn new(tx: std::sync::mpsc::Sender<InstallMessage>, notice: nwg::NoticeSender) -> Self {
+    pub fn new(tx: std::sync::mpsc::Sender<InstallMessage>, notice: nwg::NoticeSender) -> Self {
         Self { tx, notice }
     }
-    
+
     pub fn log(&self, msg: String) {
         let _ = self.tx.send(InstallMessage::Log(msg));
         self.notice.notice();

@@ -1,0 +1,25 @@
+[package]
+name = "tachyon-uninstaller"
+version.workspace = true
+edition.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "tachyon_uninstaller"
+path = "src/main.rs"
+
+[dependencies]
+setup-core = { path = "../setup-core" }
+
+native-windows-gui.workspace = true
+native-windows-derive.workspace = true
+registry.workspace = true
+utfx.workspace = true
+thiserror.workspace = true
+winres.workspace = true
+lazy_static.workspace = true
+lazy-static-include.workspace = true
+winapi = { workspace = true, features = ["winuser", "wingdi", "windef", "minwindef"] }
+
+[build-dependencies]
+embed-resource.workspace = true

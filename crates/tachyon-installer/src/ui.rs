@@ -1,41 +1,24 @@
-#![windows_subsystem = "windows"]
-
 use std::cell::RefCell;
-use std::fs::File;
-use std::io::Write;
-use std::path::{self, Path, PathBuf};
-use lazy_static::lazy_static;
+use std::path::PathBuf;
+
 use lazy_static_include::lazy_static_include_bytes;
-use error::TachyonInstallerError;
-use winapi::shared::minwindef::LRESULT;
-use winapi::um::winuser::{FillRect, GetClientRect, InvalidateRect, UpdateWindow,
-                          WM_ERASEBKGND, WM_CTLCOLORSTATIC};
-use winapi::um::winuser::{RedrawWindow, RDW_INVALIDATE, RDW_ERASE, RDW_ALLCHILDREN};
-
 use nwd::{NwgPartial, NwgUi};
-use nwg::{Font, NativeUi};
-use utfx::U16CString;
-use winapi::shared::windef::{HBRUSH, RECT};
-use crate::file_service::FileService;
-use crate::registry_service::RegistryService;
-
 use nwg::stretch::{
     geometry::{Rect, Size},
-    style::{AlignSelf, Dimension as D, FlexDirection},
+    style::{Dimension as D, FlexDirection},
 };
-use registry::{Data, Hive, Security};
+use nwg::Font;
+use setup_core::{FileService, ProcessService, RegistryService, TachyonInstallerError};
+use winapi::shared::minwindef::LRESULT;
+use winapi::shared::windef::HBRUSH;
 use winapi::um::wingdi::{CreateSolidBrush, SetBkColor, SetBkMode, RGB, TRANSPARENT};
-use crate::process_service::ProcessService;
+use winapi::um::winuser::{
+    FillRect, GetClientRect, RedrawWindow, RDW_ALLCHILDREN, RDW_ERASE, RDW_INVALIDATE,
+    WM_CTLCOLORSTATIC, WM_ERASEBKGND,
+};
+
+use crate::install_service::InstallerFileService;
 use crate::worker::{InstallMessage, Reporter};
-
-extern crate native_windows_derive as nwd;
-extern crate native_windows_gui as nwg;
-
-mod error;
-mod file_service;
-mod registry_service;
-mod process_service;
-mod worker;
 
 lazy_static_include_bytes! {
     TACHYON_BANNER => "./img/tachyon_banner.bmp",
@@ -48,18 +31,25 @@ thread_local! {
 }
 
 const PT_20: D = D::Points(20.0);
-const PT_5: D = D::Points(5.0);
-const PADDING: Rect<D> = Rect{ start: PT_20, end: PT_20, top: PT_20, bottom: PT_20 };
-const MARGIN: Rect<D> = Rect{ start: PT_20, end: PT_20, top: PT_20, bottom: PT_20 };
+const PADDING: Rect<D> = Rect { start: PT_20, end: PT_20, top: PT_20, bottom: PT_20 };
 
-const MARGIN_TOP_20: Rect<D> = Rect{ start: D::Points(0.0), end: D::Points(0.0), top: PT_20, bottom: D::Points(0.0) };
-const MARGIN_TOP_40: Rect<D> = Rect{ start: D::Points(0.0), end: D::Points(0.0), top: D::Points(40.0), bottom: D::Points(0.0) };
-
+const MARGIN_TOP_20: Rect<D> = Rect {
+    start: D::Points(0.0),
+    end: D::Points(0.0),
+    top: PT_20,
+    bottom: D::Points(0.0),
+};
+const MARGIN_TOP_40: Rect<D> = Rect {
+    start: D::Points(0.0),
+    end: D::Points(0.0),
+    top: D::Points(40.0),
+    bottom: D::Points(0.0),
+};
 
 #[derive(Default, NwgUi)]
 pub struct TachyonSetup {
     #[nwg_control(size: (650, 500), position: (300, 300), title: "Tachyon Setup", flags: "WINDOW|VISIBLE")]
-    #[nwg_events( OnInit: [TachyonSetup::on_init(RC_SELF)], OnWindowClose: [TachyonSetup::on_window_close]  )]
+    #[nwg_events( OnInit: [TachyonSetup::on_init(RC_SELF)], OnWindowClose: [TachyonSetup::on_window_close] )]
     window: nwg::Window,
 
     current_page: std::cell::Cell<u8>,
@@ -70,14 +60,12 @@ pub struct TachyonSetup {
 
     install_receiver: RefCell<Option<std::sync::mpsc::Receiver<InstallMessage>>>,
 
-    // Banner — persistent across all pages
     #[nwg_resource(source_bin: Some(&*TACHYON_BANNER))]
     banner: nwg::Bitmap,
 
     #[nwg_control(size: (160, 450), position: (0, 0), parent: window, bitmap: Some(&data.banner))]
     sidebar: nwg::ImageFrame,
 
-    // Frames now only cover the right-hand content area
     #[nwg_control(flags: "VISIBLE", parent: window, position: (160, 0), size: (490, 450))]
     welcome_frame: nwg::Frame,
 
@@ -115,15 +103,13 @@ impl TachyonSetup {
     }
 
     fn paint_background_colors(&self) {
-
         let white = ensure_brush(&WHITE_BRUSH, (255, 255, 255));
-        // for the footer
-        let gray  = ensure_brush(&GRAY_BRUSH,  (229, 229, 229));
+        let gray = ensure_brush(&GRAY_BRUSH, (229, 229, 229));
 
-        paint_hwnd_color(&self.window.handle,              0x10001, gray,  229, 229, 229);
-        paint_hwnd_color(&self.welcome_frame.handle,        0x10002, white, 255, 255, 255);
+        paint_hwnd_color(&self.window.handle, 0x10001, gray, 229, 229, 229);
+        paint_hwnd_color(&self.welcome_frame.handle, 0x10002, white, 255, 255, 255);
         paint_hwnd_color(&self.path_selection_frame.handle, 0x10003, white, 255, 255, 255);
-        paint_hwnd_color(&self.progress_frame.handle,       0x10004, white, 255, 255, 255);
+        paint_hwnd_color(&self.progress_frame.handle, 0x10004, white, 255, 255, 255);
 
         unsafe {
             let hwnds = [
@@ -133,9 +119,12 @@ impl TachyonSetup {
                 self.progress_frame.handle.hwnd().unwrap(),
             ];
             for h in hwnds {
-                //Force to redraw the window with the correct background color, including child components like inputs and stuff
-                RedrawWindow(h, std::ptr::null(), std::ptr::null_mut(),
-                             RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
+                RedrawWindow(
+                    h,
+                    std::ptr::null(),
+                    std::ptr::null_mut(),
+                    RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN,
+                );
             }
         }
     }
@@ -147,33 +136,26 @@ impl TachyonSetup {
             Err(_) => {
                 self.path_selection_page
                     .desc
-                    .set_text("Windows Live Messenger installation folder not found.");
-
-                self.path_selection_page.desc.set_text("Could not detect Windows Live Messenger Installation folder.")
+                    .set_text("Could not detect Windows Live Messenger Installation folder.");
             }
-            Ok(install_path) => {
-                match FileService::is_valid_install_folder(&install_path) {
-                    Ok(true) => {
-                        self.path_selection_page.path_label.set_text(
-                            install_path.to_str().expect("Path to be valid at this point"),
-                        );
-                        self.path_selection_page
-                            .desc
-                            .set_text("Found Windows Live Messenger 2009 folder:");
-
-                        self.path_selection_page.next_label.set_visible(true);
-                    }
-                    _ => {
-                        self.path_selection_page
-                            .desc
-                            .set_text("Windows Live Messenger installation folder not found.");
-
-                        self.path_selection_page.desc.set_text("Found invalid Windows Live Messenger installation folder. Please reinstall Windows Live Messenger 14 and try again.")
-                    }
+            Ok(install_path) => match FileService::is_valid_install_folder(&install_path) {
+                Ok(true) => {
+                    self.path_selection_page.path_label.set_text(
+                        install_path
+                            .to_str()
+                            .expect("Path to be valid at this point"),
+                    );
+                    self.path_selection_page
+                        .desc
+                        .set_text("Found Windows Live Messenger 2009 folder:");
+                    self.path_selection_page.next_label.set_visible(true);
                 }
-
-
-            }
+                _ => {
+                    self.path_selection_page.desc.set_text(
+                        "Found invalid Windows Live Messenger installation folder. Please reinstall Windows Live Messenger 14 and try again.",
+                    );
+                }
+            },
         }
     }
 
@@ -182,16 +164,15 @@ impl TachyonSetup {
     }
 
     fn back(&self) {
-    match self.current_page.get() {
+        match self.current_page.get() {
             1 => {
                 self.back_button.set_enabled(false);
                 self.welcome_frame.set_visible(true);
                 self.path_selection_frame.set_visible(false);
                 self.current_page.set(0);
             }
-            2 => {}
             _ => {}
-    }
+        }
     }
 
     fn next_page(&self) {
@@ -205,13 +186,15 @@ impl TachyonSetup {
             1 => {
                 if let Ok(processes) = ProcessService::get_blocking_running_processes() {
                     if !processes.is_empty() {
-
                         let mut message = "Oof ! Windows Live Messenger is currently running.\r\nPlease close it before continuing.\r\n\r\nThe following processes must be stopped during setup:\n\n".to_string();
                         for process in processes {
                             message.push_str(&format!("- {}\n", process));
                         }
-                        nwg::modal_info_message(&self.window, "Windows Live Messenger is running", &message);
-
+                        nwg::modal_info_message(
+                            &self.window,
+                            "Windows Live Messenger is running",
+                            &message,
+                        );
                         return;
                     }
                 }
@@ -232,7 +215,8 @@ impl TachyonSetup {
     }
 
     fn start_install_task(&self) {
-        let wl_install_folder_path: PathBuf = self.path_selection_page.path_label.text().into();
+        let wl_install_folder_path: PathBuf =
+            self.path_selection_page.path_label.text().into();
         let (tx, rx) = std::sync::mpsc::channel::<InstallMessage>();
         *self.install_receiver.borrow_mut() = Some(rx);
 
@@ -240,7 +224,7 @@ impl TachyonSetup {
         let sender = self.install_notice.sender();
 
         std::thread::spawn(move || {
-            let result = Self::do_stuff_worker(&wl_install_folder_path, &reporter);
+            let result = do_stuff_worker(&wl_install_folder_path, &reporter);
 
             match result {
                 Ok(()) => {
@@ -254,52 +238,9 @@ impl TachyonSetup {
         });
     }
 
-    fn do_stuff_worker(
-        wl_install_folder_path: &PathBuf,
-        reporter: &Reporter,
-    ) -> Result<(), TachyonInstallerError> {
-        let log_fn = |msg| reporter.log(msg);
-        let progress_fn = || reporter.progress();
-
-        if FileService::is_installed(wl_install_folder_path) {
-            reporter.log("Found older install. Cleaning up...".into());
-            let _ = FileService::uninstall(wl_install_folder_path, log_fn);
-            let _ = RegistryService::uninstall(log_fn);
-        }
-
-        let rollback_and_fail = |e: TachyonInstallerError| -> TachyonInstallerError {
-            reporter.log(format!("Install failed: {}. Rolling back...", e));
-            let _ = FileService::uninstall(wl_install_folder_path, log_fn);
-            let _ = RegistryService::uninstall(log_fn);
-            e
-        };
-
-        reporter.log("Installing new files...".into());
-        FileService::install(wl_install_folder_path, log_fn, progress_fn)
-            .map_err(rollback_and_fail)?;
-        RegistryService::install(wl_install_folder_path, log_fn, progress_fn)
-            .map_err(rollback_and_fail)?;
-
-        reporter.log("Stalling for a bit so we pretend that we are a serious installer.".into());
-        reporter.progress();
-        std::thread::sleep(std::time::Duration::from_secs(1));
-
-        reporter.log("Reticulating message splines.".into());
-        reporter.progress();
-        std::thread::sleep(std::time::Duration::from_secs(1));
-
-        reporter.log("Unzuckerberging your dms.".into());
-        std::thread::sleep(std::time::Duration::from_secs(1));
-
-        reporter.log("Advancing the bar to the end for no reason...".into());
-        reporter.progress_to_end();
-
-        Ok(())
-    }
-
     fn on_worker_message(&self) {
         let mut finished = false;
-        
+
         {
             let receiver = self.install_receiver.borrow();
             let rx = match receiver.as_ref() {
@@ -321,14 +262,19 @@ impl TachyonSetup {
                     }
                     InstallMessage::Done => {
                         self.progress_page.logs.appendln("Installation complete.");
-                        self.progress_page.title.set_text("Installation complete");
+                        self.progress_page
+                            .title
+                            .set_text("Installation complete");
                         self.next_button.set_text("Finish");
                         self.next_button.set_enabled(true);
                         self.cancel_button.set_enabled(true);
                         finished = true;
                     }
                     InstallMessage::Error(e) => {
-                        self.progress_page.logs.appendln(&format!("An error has occured while installing:\r\n{}", e));
+                        self.progress_page.logs.appendln(&format!(
+                            "An error has occured while installing:\r\n{}",
+                            e
+                        ));
                         self.next_button.set_text("Close");
                         self.next_button.set_enabled(true);
                         self.cancel_button.set_enabled(true);
@@ -342,10 +288,57 @@ impl TachyonSetup {
             *self.install_receiver.borrow_mut() = None;
         }
     }
+}
 
-    fn log(&self, msg: String) {
-        self.progress_page.logs.appendln(&msg);
+/// Run the full install sequence on a worker thread.
+/// Free function (not `&self`) so nothing non-Send sneaks in.
+fn do_stuff_worker(
+    wl_install_folder_path: &PathBuf,
+    reporter: &Reporter,
+) -> Result<(), TachyonInstallerError> {
+    let log_fn = |msg| reporter.log(msg);
+    let progress_fn = || reporter.progress();
+
+    if FileService::is_installed(wl_install_folder_path) {
+        reporter.log("Found older install. Cleaning up...".into());
+        let _ = FileService::uninstall(wl_install_folder_path, log_fn);
+        let _ = RegistryService::uninstall(log_fn);
+        let _ = RegistryService::remove_uninstall_entry(log_fn);
     }
+
+    let rollback_and_fail = |e: TachyonInstallerError| -> TachyonInstallerError {
+        reporter.log(format!("Install failed: {}. Rolling back...", e));
+        let _ = FileService::uninstall(wl_install_folder_path, log_fn);
+        let _ = RegistryService::uninstall(log_fn);
+        let _ = RegistryService::remove_uninstall_entry(log_fn);
+        e
+    };
+
+    reporter.log("Installing Tachyon...".into());
+    InstallerFileService::install(wl_install_folder_path, log_fn, progress_fn)
+        .map_err(rollback_and_fail)?;
+    RegistryService::install(wl_install_folder_path, log_fn, progress_fn)
+        .map_err(rollback_and_fail)?;
+
+    let uninstaller_exe = InstallerFileService::uninstaller_path(wl_install_folder_path);
+    RegistryService::create_uninstall_entry(wl_install_folder_path, &uninstaller_exe, log_fn)
+        .map_err(rollback_and_fail)?;
+
+    reporter.log("Stalling for a bit so we pretend that we are a serious installer.".into());
+    reporter.progress();
+    std::thread::sleep(std::time::Duration::from_secs(1));
+
+    reporter.log("Reticulating message splines.".into());
+    reporter.progress();
+    std::thread::sleep(std::time::Duration::from_secs(2));
+
+    reporter.log("Unzuckerberging your dms.".into());
+    std::thread::sleep(std::time::Duration::from_secs(2));
+
+    reporter.log("Advancing the bar to the end for no reason...".into());
+    reporter.progress_to_end();
+
+    Ok(())
 }
 
 #[derive(Default, NwgPartial)]
@@ -361,8 +354,6 @@ pub struct WelcomePage {
     #[nwg_layout_item(layout: layout, margin: MARGIN_TOP_20,  size: Size{ width: D::Points(450.0), height: D::Points(180.0)})]
     desc: nwg::Label,
 }
-
-impl WelcomePage {}
 
 #[derive(Default, NwgPartial)]
 pub struct PathSelectionPage {
@@ -384,10 +375,7 @@ pub struct PathSelectionPage {
     #[nwg_control(flags: "NONE", text: "To proceed with the install, click Next.", font: Some(&desc_font()), background_color: Some([255, 255, 255]))]
     #[nwg_layout_item(layout: layout, margin: MARGIN_TOP_20, size: Size{ width: D::Points(450.0), height: D::Points(30.0)})]
     next_label: nwg::Label,
-
 }
-
-impl PathSelectionPage {}
 
 #[derive(Default, NwgPartial)]
 pub struct ProgressPage {
@@ -398,7 +386,7 @@ pub struct ProgressPage {
     #[nwg_layout_item(layout: layout, size: Size{ width: D::Points(450.0), height: D::Points(30.0)})]
     title: nwg::Label,
 
-    #[nwg_control(step: 10, range: 0..50)]
+    #[nwg_control(step: 10, range: 0..80)]
     #[nwg_layout_item(layout: layout, margin: MARGIN_TOP_20, size: Size{ width: D::Points(450.0), height: D::Points(25.0)})]
     progress_bar: nwg::ProgressBar,
 
@@ -406,17 +394,17 @@ pub struct ProgressPage {
     #[nwg_layout_item(layout: layout, margin: MARGIN_TOP_40, size: Size{ width: D::Points(450.0), height: D::Points(30.0)})]
     status: nwg::Label,
 
-    #[nwg_control(text: "", readonly: true, flags: "VISIBLE|AUTOVSCROLL|VSCROLL" )]
+    #[nwg_control(text: "", readonly: true, flags: "VISIBLE|AUTOVSCROLL|VSCROLL")]
     #[nwg_layout_item(layout: layout, size: Size{ width: D::Points(450.0), height: D::Points(250.0)})]
     logs: nwg::TextBox,
 }
 
+// ---- helpers ------------------------------------------------------
 
-
-impl ProgressPage {}
-
-
-fn ensure_brush(cell: &'static std::thread::LocalKey<std::cell::Cell<HBRUSH>>, rgb: (u8, u8, u8)) -> HBRUSH {
+fn ensure_brush(
+    cell: &'static std::thread::LocalKey<std::cell::Cell<HBRUSH>>,
+    rgb: (u8, u8, u8),
+) -> HBRUSH {
     cell.with(|b| {
         let mut h = b.get();
         if h.is_null() {
@@ -427,29 +415,34 @@ fn ensure_brush(cell: &'static std::thread::LocalKey<std::cell::Cell<HBRUSH>>, r
     })
 }
 
-//All this shit is just to paint the window background color.
-fn paint_hwnd_color(handle: &nwg::ControlHandle, handler_id: usize, brush: HBRUSH, r: u8, g: u8, b: u8) {
-    let handler = nwg::bind_raw_event_handler(handle, handler_id, move |hwnd, msg, w, _l| {
-        unsafe {
-            match msg {
-                WM_ERASEBKGND => {
-                    let hdc = w as winapi::shared::windef::HDC;
-                    let mut rc = std::mem::zeroed();
-                    GetClientRect(hwnd, &mut rc);
-                    FillRect(hdc, &rc, brush);
-                    return Some(1 as LRESULT);
-                }
-                WM_CTLCOLORSTATIC => {
-                    let hdc = w as winapi::shared::windef::HDC;
-                    SetBkMode(hdc, TRANSPARENT as i32);
-                    SetBkColor(hdc, RGB(r, g, b));
-                    return Some(brush as LRESULT);
-                }
-                _ => {}
+fn paint_hwnd_color(
+    handle: &nwg::ControlHandle,
+    handler_id: usize,
+    brush: HBRUSH,
+    r: u8,
+    g: u8,
+    b: u8,
+) {
+    let handler = nwg::bind_raw_event_handler(handle, handler_id, move |hwnd, msg, w, _l| unsafe {
+        match msg {
+            WM_ERASEBKGND => {
+                let hdc = w as winapi::shared::windef::HDC;
+                let mut rc = std::mem::zeroed();
+                GetClientRect(hwnd, &mut rc);
+                FillRect(hdc, &rc, brush);
+                return Some(1 as LRESULT);
             }
+            WM_CTLCOLORSTATIC => {
+                let hdc = w as winapi::shared::windef::HDC;
+                SetBkMode(hdc, TRANSPARENT as i32);
+                SetBkColor(hdc, RGB(r, g, b));
+                return Some(brush as LRESULT);
+            }
+            _ => {}
         }
         None
-    }).expect("Failed to bind raw handler");
+    })
+    .expect("Failed to bind raw handler");
 
     FRAME_HANDLERS.with(|h| h.borrow_mut().push(handler));
 }
@@ -459,25 +452,16 @@ fn title_font() -> Font {
     nwg::FontBuilder::new()
         .family("Segoe UI")
         .size(28)
-        .build(&mut font).expect("TODO: panic message");
-    return font;
+        .build(&mut font)
+        .expect("Failed to build title font");
+    font
 }
 
 fn desc_font() -> Font {
     let mut font = Font::default();
-    nwg::FontBuilder::new()
+    let _ = nwg::FontBuilder::new()
         .family("Segoe UI")
         .size(20)
         .build(&mut font);
-    return font;
-}
-
-fn main() {
-    nwg::init().expect("Failed to init Native Windows GUI");
-
-    nwg::Font::set_global_family("Segoe UI");
-
-    let _app = TachyonSetup::build_ui(Default::default()).expect("Failed to build UI");
-
-    nwg::dispatch_thread_events();
+    font
 }

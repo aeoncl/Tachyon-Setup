@@ -1,4 +1,5 @@
 use thiserror::Error;
+
 #[derive(Error, Debug)]
 pub enum TachyonInstallerError {
     #[error("An error has occured while accessing a registry key: {}", .0)]

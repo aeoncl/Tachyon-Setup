@@ -1,0 +1,25 @@
+# Rust/Cargo build artifacts
+/target/
+**/target/
+
+# IDE files
+/.idea/
+*.iml
+*.swp
+*.swo
+*~
+
+# OS-specific
+Thumbs.db
+Desktop.ini
+
+# Backup files
+*.bak
+*.tmp
+
+# Build outputs
+*.exe
+*.dll
+*.pdb
+
+crates/tachyon-installer/assets/**

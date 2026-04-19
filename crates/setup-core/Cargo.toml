@@ -1,0 +1,11 @@
+[package]
+name = "setup-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+registry.workspace = true
+utfx.workspace = true
+directories.workspace = true
+winapi = { workspace = true, features = ["tlhelp32", "handleapi"] }
