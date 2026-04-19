@@ -32,5 +32,6 @@ It composed of three rust crates:
 3. Run Windows Live Messenger (Tachyon)
 
 ## Log-in
-You can connect to Windows Live Messenger using your matrix id in an email format: `{user_id}@server`
+You can connect to Windows Live Messenger using your matrix id in an email format: `{user_id}@server.com`
+
 If your password is longer than the 16 characters WLM gives us, you can type `tachyon` as the password, you will be able to login through a web page served locally, and then reconnect through the client.
