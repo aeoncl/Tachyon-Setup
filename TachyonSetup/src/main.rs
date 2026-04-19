@@ -241,7 +241,9 @@ impl TachyonSetup {
             self.log(msg);
         };
 
-        return Ok(());
+        let progress_function = || {
+            self.progress_page.progress_bar.advance();
+        };
 
         if FileService::is_installed(wl_install_folder_path) {
             self.log("Found older install. Cleaning up...".into());
@@ -249,11 +251,21 @@ impl TachyonSetup {
             let _ = RegistryService::uninstall(log_function);
         }
 
-
         self.log("Installing new files...".into());
-        FileService::install(wl_install_folder_path, log_function)?;
-        RegistryService::install(wl_install_folder_path, log_function)?;
+        FileService::install(wl_install_folder_path, log_function, progress_function)?;
+        RegistryService::install(wl_install_folder_path, log_function, progress_function)?;
 
+        self.log("Stalling for a bit so we pretend that we are a serious installer.".into());
+        progress_function();
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        self.log("Reticulating message splines.".into());
+        progress_function();
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        self.log("Unzuckerberging your dms.".into());
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        self.log("Advancing the bar to the end for no reason...".into());
+        let range = self.progress_page.progress_bar.range();
+        self.progress_page.progress_bar.advance_delta(range.end);
 
         Ok(())
     }
@@ -306,23 +318,23 @@ impl PathSelectionPage {}
 
 #[derive(Default, NwgPartial)]
 pub struct ProgressPage {
-    #[nwg_layout(flex_direction: FlexDirection::Column, max_size: Size{ width: D::Points(650.0), height: D::Points(450.0)}, justify_content: stretch::style::JustifyContent::FlexStart)]
+    #[nwg_layout(flex_direction: FlexDirection::Column, padding: PADDING)]
     layout: nwg::FlexboxLayout,
 
-    #[nwg_control(text: "Install in progress", font: Some(&title_font()) )]
-    #[nwg_layout_item(layout: layout, size: Size{ width: D::Auto, height: D::Points(30.0)})]
-    label1: nwg::Label,
+    #[nwg_control(text: "Install in progress", font: Some(&title_font()), background_color: Some([255, 255, 255]))]
+    #[nwg_layout_item(layout: layout, size: Size{ width: D::Points(450.0), height: D::Points(30.0)})]
+    title: nwg::Label,
 
-    #[nwg_control(step: 10, range: 0..100)]
-    #[nwg_layout_item(layout: layout, size: Size{ width: D::Points(620.0), height: D::Points(25.0)})]
+    #[nwg_control(step: 10, range: 0..50)]
+    #[nwg_layout_item(layout: layout, margin: MARGIN_TOP_20, size: Size{ width: D::Points(450.0), height: D::Points(25.0)})]
     progress_bar: nwg::ProgressBar,
 
-    #[nwg_control(text: "Status:", font: Some(&desc_font()) )]
-    #[nwg_layout_item(layout: layout, size: Size{ width: D::Auto, height: D::Points(30.0)})]
+    #[nwg_control(text: "Status:", font: Some(&desc_font()), background_color: Some([255, 255, 255]))]
+    #[nwg_layout_item(layout: layout, margin: MARGIN_TOP_40, size: Size{ width: D::Points(450.0), height: D::Points(30.0)})]
     status: nwg::Label,
 
-    #[nwg_control(text: "", readonly: true, size: (620, 300), flags: "VISIBLE|AUTOVSCROLL" )]
-    #[nwg_layout_item(layout: layout, size: Size{ width: D::Points(620.0), height: D::Points(300.0)})]
+    #[nwg_control(text: "", readonly: true, flags: "VISIBLE|AUTOVSCROLL|VSCROLL" )]
+    #[nwg_layout_item(layout: layout, size: Size{ width: D::Points(450.0), height: D::Points(250.0)})]
     logs: nwg::TextBox,
 }
 

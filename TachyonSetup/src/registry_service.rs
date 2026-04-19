@@ -10,11 +10,12 @@ const CONTACT_PROXY_CLSID: &str = "{D86BCC3A-303F-41C9-AF6B-5E30C38FAF36}";
 
 impl RegistryService {
 
-    pub fn install(install_path: &Path, log: impl Fn(String)) -> Result<(), TachyonInstallerError> {
+    pub fn install(install_path: &Path, log: impl Fn(String), progress: impl Fn()) -> Result<(), TachyonInstallerError> {
         Self::write_identity_crl_registry_keys(&log)?;
-
+        progress();
         let contacts_path = install_path.join("Contacts");
         Self::write_contact_com_proxy_registry_keys(contacts_path.as_path(), &log)?;
+        progress();
         Ok(())
     }
 

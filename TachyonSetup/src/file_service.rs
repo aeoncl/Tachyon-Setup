@@ -68,11 +68,11 @@ pub struct FileService {}
 
 impl FileService {
 
-    pub fn install(path: &PathBuf, log: impl Fn(String)) -> Result<(), TachyonInstallerError> {
+    pub fn install(path: &PathBuf, log: impl Fn(String), progress: impl Fn()) -> Result<(), TachyonInstallerError> {
         let messenger_path = path.join("Messenger");
-        Self::write_msnmsgr_files(&messenger_path, &log)?;
+        Self::write_msnmsgr_files(&messenger_path, &log, &progress)?;
         let contacts_path = path.join("Contacts");
-        Self::write_contact_files(&contacts_path, &log)?;
+        Self::write_contact_files(&contacts_path, &log, &progress)?;
 
         Ok(())
     }
@@ -126,22 +126,24 @@ impl FileService {
         file_entry.write_to_disk(parent_path)
     }
 
-    fn write_contact_files(path: &Path, log: impl Fn(String)) -> Result<(), TachyonInstallerError> {
+    fn write_contact_files(path: &Path, log: impl Fn(String), progress: impl Fn()) -> Result<(), TachyonInstallerError> {
         log("Supercharging Windows Live Contacts files.".into());
 
         for file_entry in CONTACT_FILES.iter() {
             Self::write_file(path, file_entry, &log)?;
+            progress();
         }
 
         Ok(())
     }
 
 
-    fn write_msnmsgr_files(path: &Path, log: impl Fn(String)) -> Result<(), TachyonInstallerError> {
+    fn write_msnmsgr_files(path: &Path, log: impl Fn(String), progress: impl Fn()) -> Result<(), TachyonInstallerError> {
         log("Enriching Windows Live Messenger files.".into());
 
         for file_entry in MSN_MSGR_FILES.iter() {
             Self::write_file(path, file_entry, &log)?;
+            progress();
         }
 
         Ok(())
