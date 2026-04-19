@@ -29,4 +29,4 @@ It composed of three rust crates:
 
 1. Install Windows Live Messenger 2009 (14.0)
 2. Run the installer
-3. Run Windows Live Messenger (Tachyonized)
+3. Run Windows Live Messenger (Tachyon)
