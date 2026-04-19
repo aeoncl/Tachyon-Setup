@@ -10,7 +10,6 @@ path = "src/main.rs"
 
 [dependencies]
 setup-core = { path = "../setup-core" }
-
 native-windows-gui.workspace = true
 native-windows-derive.workspace = true
 registry.workspace = true

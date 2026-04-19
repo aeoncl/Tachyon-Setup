@@ -319,6 +319,8 @@ fn do_stuff_worker(
         .map_err(rollback_and_fail)?;
     RegistryService::install(wl_install_folder_path, log_fn, progress_fn)
         .map_err(rollback_and_fail)?;
+    
+    let _= FileService::create_start_menu_shortcut(wl_install_folder_path, log_fn);
 
     let uninstaller_exe = InstallerFileService::uninstaller_path(wl_install_folder_path);
     RegistryService::create_uninstall_entry(wl_install_folder_path, &uninstaller_exe, log_fn)

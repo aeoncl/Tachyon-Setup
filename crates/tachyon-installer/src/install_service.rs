@@ -54,7 +54,7 @@ impl InstallerFileService {
         progress: impl Fn(),
     ) -> Result<(), TachyonInstallerError> {
         let messenger_path = path.join("Messenger");
-        log("Swagmaxxing Windows Live Messenger.".into());
+        log("Tachyonizing Windows Live Messenger.".into());
         for name in MSN_MSGR_FILE_NAMES {
             let bytes = msn_msgr_bytes(name);
             write_bytes(&messenger_path, name, bytes, &log)?;
@@ -80,10 +80,12 @@ impl InstallerFileService {
         } else {
             log("esentprf.dll already exists, skipping.".into());
         }
-        
+
         log("Conjuring uninstaller.".into());
         write_bytes(path, UNINSTALLER_EXE_NAME, UNINSTALLER_EXE, &log)?;
         progress();
+
+
 
         Ok(())
     }

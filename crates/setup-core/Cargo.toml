@@ -4,8 +4,9 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+shortcuts-rs = "1.1.1"
 thiserror.workspace = true
 registry.workspace = true
 utfx.workspace = true
 directories.workspace = true
-winapi = { workspace = true, features = ["tlhelp32", "handleapi"] }
+winapi = { workspace = true, features = ["tlhelp32", "handleapi", "shlobj", "winerror"] }

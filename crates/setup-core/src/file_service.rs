@@ -1,5 +1,8 @@
 use crate::error::TachyonInstallerError;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use shortcuts_rs::ShellLink;
+use winapi::shared::winerror::S_OK;
+use winapi::um::shlobj::{SHGetFolderPathW, CSIDL_COMMON_PROGRAMS, SHGFP_TYPE_CURRENT};
 
 pub const MSN_MSGR_FILE_NAMES: &[&str] = &[
     "zathras.dll",
@@ -36,6 +39,7 @@ impl FileService {
         )?;
 
         Self::remove_tachyon_idcrl_files(&log)?;
+        Self::remove_start_menu_shortcut(&log)?;
         Ok(())
     }
 
@@ -112,4 +116,70 @@ impl FileService {
         }
         Ok(())
     }
+
+    pub fn create_start_menu_shortcut(
+        wl_install_folder: &Path,
+        log: impl Fn(String),
+    ) -> Result<(), TachyonInstallerError> {
+        let target = wl_install_folder.join("Messenger").join("draal.exe");
+
+
+        let shortcut_dir = Self::common_programs_dir()
+            .ok_or(TachyonInstallerError::PathNotExist("CSIDL_COMMON_PROGRAMS".into()))?
+            .join("Tachyon");
+        
+        std::fs::create_dir_all(&shortcut_dir)?;
+
+        let shortcut_path = shortcut_dir.join("Windows Live Messenger (Tachyon).lnk");
+
+        log(format!("Creating Start Menu entry: {}", shortcut_path.display()));
+
+        // icon_location points to the exe itself so the shortcut inherits its icon
+        let sl = ShellLink::new(
+            target,
+            None,
+            Some("Windows Live Messenger (Tachyon)".to_string()),
+            None
+        ).map_err(|e| TachyonInstallerError::PathNotExist(format!("ShellLink: {:?}", e)))?;
+
+        sl.create_lnk(&shortcut_path)
+            .map_err(|e| TachyonInstallerError::PathNotExist(format!("create_lnk: {:?}", e)))?;
+
+        Ok(())
+    }
+    
+    pub fn remove_start_menu_shortcut(
+        log: impl Fn(String),
+    ) -> Result<(), TachyonInstallerError> {
+
+        let shortcut_dir = Self::common_programs_dir()
+            .ok_or(TachyonInstallerError::PathNotExist("CSIDL_COMMON_PROGRAMS".into()))?
+            .join("Tachyon");
+
+        if shortcut_dir.exists() {
+            log(format!("Removing Start Menu entry: {}", shortcut_dir.display()));
+            let _ = std::fs::remove_dir_all(&shortcut_dir);
+        }
+        Ok(())
+    }
+
+    fn common_programs_dir() -> Option<PathBuf> {
+        let mut buf = [0u16; 260]; // MAX_PATH
+        let hr = unsafe {
+            SHGetFolderPathW(
+                std::ptr::null_mut(),
+                CSIDL_COMMON_PROGRAMS as i32,
+                std::ptr::null_mut(),
+                SHGFP_TYPE_CURRENT,
+                buf.as_mut_ptr(),
+            )
+        };
+        if hr != S_OK {
+            return None;
+        }
+        let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        use std::os::windows::ffi::OsStringExt;
+        Some(PathBuf::from(std::ffi::OsString::from_wide(&buf[..len])))
+    }
+
 }
