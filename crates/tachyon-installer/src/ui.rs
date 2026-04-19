@@ -290,8 +290,6 @@ impl TachyonSetup {
     }
 }
 
-/// Run the full install sequence on a worker thread.
-/// Free function (not `&self`) so nothing non-Send sneaks in.
 fn do_stuff_worker(
     wl_install_folder_path: &PathBuf,
     reporter: &Reporter,
@@ -400,8 +398,6 @@ pub struct ProgressPage {
     #[nwg_layout_item(layout: layout, size: Size{ width: D::Points(450.0), height: D::Points(250.0)})]
     logs: nwg::TextBox,
 }
-
-// ---- helpers ------------------------------------------------------
 
 fn ensure_brush(
     cell: &'static std::thread::LocalKey<std::cell::Cell<HBRUSH>>,
