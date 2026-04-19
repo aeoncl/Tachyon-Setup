@@ -27,7 +27,7 @@ It composed of three rust crates:
 
 ## Usage
 
-1. Install Windows Live Messenger 2009 (14.0)
+1. Install [Windows Live Messenger 2009 (14.0)](https://github.com/aeoncl/WindowsLiveMessenger2009/releases/tag/1.0.0)
 2. Run the installer
 3. Run Windows Live Messenger (Tachyon)
 
