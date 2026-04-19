@@ -340,7 +340,7 @@ pub struct ConfirmPage {
     #[nwg_layout_item(layout: layout, size: Size{ width: D::Points(450.0), height: D::Points(30.0)})]
     title: nwg::Label,
 
-    #[nwg_control(text: "This will remove Tachyon from your Windows Live Messenger install and restore the original Messenger behaviour.\r\n\r\nYour Windows Live Messenger itself will not be uninstalled.\r\n\r\nTo continue, click Uninstall.", font: Some(&desc_font()), background_color: Some([255, 255, 255]))]
+    #[nwg_control(text: "This will remove Tachyon from your Windows Live Messenger install.\r\n\r\nYour Windows Live Messenger itself will not be uninstalled.\r\n\r\nTo continue, click Uninstall.", font: Some(&desc_font()), background_color: Some([255, 255, 255]))]
     #[nwg_layout_item(layout: layout, margin: MARGIN_TOP_20, size: Size{ width: D::Points(450.0), height: D::Points(120.0)})]
     desc: nwg::Label,
 
