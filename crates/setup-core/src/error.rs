@@ -14,4 +14,6 @@ pub enum TachyonInstallerError {
     EnumerateProcess,
     #[error("Invalid path: {:?}", .0)]
     InvalidPath(Option<String>),
+    #[error("An error has occured: {}", .0)]
+    UnknownError(#[from] anyhow::Error),
 }

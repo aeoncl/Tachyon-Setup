@@ -7,6 +7,7 @@ edition.workspace = true
 shortcuts-rs = "1.1.1"
 thiserror.workspace = true
 registry.workspace = true
+anyhow.workspace = true
 utfx.workspace = true
 directories.workspace = true
-winapi = { workspace = true, features = ["tlhelp32", "handleapi", "shlobj", "winerror"] }
+winapi = { workspace = true, features = ["tlhelp32", "handleapi", "shlobj", "winerror", "objbase", "shobjidl_core", "propkey", "propkeydef", "propidl", "propsys", "objidl", "unknwnbase", "wtypes"] }
