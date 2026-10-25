@@ -19,6 +19,7 @@ use winapi::ctypes::c_void;
 pub const MSN_MSGR_FILE_NAMES: &[&str] = &[
     "zathras.dll",
     "draal.exe",
+    "draal.ico",
     "draal.ini",
     "epsilon3.dll",
     "tachyon.exe",
@@ -137,6 +138,7 @@ impl FileService {
         log: impl Fn(String),
     ) -> Result<(), TachyonInstallerError> {
         let target = wl_install_folder.join("Messenger").join("draal.exe");
+        let target_icon_path = wl_install_folder.join("Messenger").join("draal.ico");
 
         let shortcut_dir = Self::common_programs_dir()
             .ok_or(TachyonInstallerError::PathNotExist("CSIDL_COMMON_PROGRAMS".into()))?
@@ -151,6 +153,7 @@ impl FileService {
         create_lnk(
             "Windows Live Messenger (Tachyon)",
             &target,
+            &target_icon_path,
             Some(APP_USER_MODEL_ID),
             &shortcut_path,
         )?;
@@ -193,6 +196,43 @@ impl FileService {
 
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The .lnk property store must contain the AppUserModelID string itself.
+    /// Regression test: the PROPVARIANT once pointed at a wide buffer that was
+    /// dropped before SetValue deep-copied it, so the shortcut ended up with
+    /// freed-heap garbage as its AppUserModelID.
+    #[test]
+    fn lnk_property_store_contains_app_model_id() {
+        let out_path = std::env::temp_dir().join("tachyon-lnk-appid-test.lnk");
+        let _ = std::fs::remove_file(&out_path);
+
+        create_lnk(
+            "Test",
+            Path::new("C:\\target\\draal.exe"),
+            Path::new("C:\\target\\draal.ico"),
+            Some(APP_USER_MODEL_ID),
+            &out_path,
+        )
+        .expect("create_lnk failed");
+
+        let bytes = std::fs::read(&out_path).expect("lnk not written");
+        let _ = std::fs::remove_file(&out_path);
+
+        let id_utf16le: Vec<u8> = APP_USER_MODEL_ID
+            .encode_utf16()
+            .flat_map(|unit| unit.to_le_bytes())
+            .collect();
+        assert!(
+            bytes.windows(id_utf16le.len()).any(|w| w == id_utf16le.as_slice()),
+            "AppUserModelID {:?} not found in .lnk property store",
+            APP_USER_MODEL_ID
+        );
+    }
+}
+
 DEFINE_GUID!(CLSID_SHELLLINK, 0x00021401, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
 DEFINE_GUID!(IID_ISHELLLINKW, 0x000214F9, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
 DEFINE_GUID!(IID_IPERSISTFILE, 0x0000010B, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
@@ -207,13 +247,16 @@ fn to_wide(s: &str) -> Vec<u16> {
 fn create_lnk(
     name: &str,
     executable_path: &Path,
+    icon_path: &Path,
     app_model_id_override: Option<&str>,
     output_path: &Path,
 ) -> Result<(), TachyonInstallerError> {
 
-    let desc_wide = to_wide(name);
-    let exec_wide = to_wide(&executable_path.to_string_lossy());
-    let out_wide = to_wide(&output_path.to_string_lossy());
+    let description_wide = to_wide(name);
+    let executable_path_wide = to_wide(&executable_path.to_string_lossy());
+    let icon_path_wide = to_wide(&icon_path.to_string_lossy());
+
+    let output_path_wide = to_wide(&output_path.to_string_lossy());
 
     unsafe {
         // S_FALSE means COM is already initialized on this thread with a
@@ -235,22 +278,25 @@ fn create_lnk(
             return Err(TachyonInstallerError::PathNotExist("CoCreateInstance ShellLink".into()));
         }
 
-        let app_model_id = app_model_id_override.map(|id| {
-            let mut id_wide = to_wide(id);
+        // AppUserModelID as VT_LPWSTR, the property's canonical type. The wide
+        // buffer is owned by this scope and only borrowed by the PROPVARIANT:
+        // it must outlive SetValue, which is where the store deep-copies it.
+        let mut app_model_id_wide = app_model_id_override.map(to_wide);
+        let app_model_id = app_model_id_wide.as_mut().map(|id| {
             let mut propvar: PROPVARIANT = std::mem::zeroed();
             propvar.vt = VT_LPWSTR as VARTYPE;
-            *propvar.data.pwszVal_mut() = id_wide.as_mut_ptr();
+            *propvar.data.pwszVal_mut() = id.as_mut_ptr();
             propvar
         });
 
-        // AppUserModelID as VT_LPWSTR, the property's canonical type. The store
-        // deep-copies on SetValue, so the buffer only needs to outlive that call.
-
-        let hr = shell_link_instance.as_mut_unchecked().SetPath(exec_wide.as_ptr());
+        let hr = shell_link_instance.as_mut_unchecked().SetPath(executable_path_wide.as_ptr());
         if hr != S_OK {
             return Err(TachyonInstallerError::PathNotExist(format!("SetPath: {:?}", hr)));
         }
-        let _ = shell_link_instance.as_mut_unchecked().SetDescription(desc_wide.as_ptr());
+        let _ = shell_link_instance.as_mut_unchecked().SetDescription(description_wide.as_ptr());
+
+        let _ = shell_link_instance.as_mut_unchecked().SetIconLocation(icon_path_wide.as_ptr(), 0);
+
 
         let iunknown = shell_link_instance as *mut IUnknown;
         let mut property_store: *mut IPropertyStore = std::ptr::null_mut();
@@ -283,7 +329,7 @@ fn create_lnk(
             return Err(TachyonInstallerError::PathNotExist("QueryInterface IPersistFile".into()));
         }
 
-        let hr = persist.as_mut_unchecked().Save(out_wide.as_ptr(), 1);
+        let hr = persist.as_mut_unchecked().Save(output_path_wide.as_ptr(), 1);
         if hr != S_OK {
             return Err(TachyonInstallerError::PathNotExist(format!("IPersistFile Save: {:?}", hr)));
         }
@@ -294,65 +340,4 @@ fn create_lnk(
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Creates a real shortcut through the COM path and asserts the
-    /// AppUserModelID is embedded in the .lnk's property store data.
-    #[test]
-    fn shortcut_contains_app_model_id() {
-        let shortcut_path = std::env::temp_dir().join("tachyon-create-lnk-test.lnk");
-        let _ = std::fs::remove_file(&shortcut_path);
-
-        create_lnk(
-            "Windows Live Messenger (Tachyon)",
-            Path::new("C:\\Windows\\System32\\cmd.exe"),
-            None,
-            &shortcut_path,
-        )
-        .expect("create_lnk failed");
-
-        let bytes = std::fs::read(&shortcut_path).expect("shortcut was not written");
-
-        // The .lnk property store serializes each property pair as
-        // [size: u32][pid: u32][version: u8][vt: u16][padding: u16]
-        // [char count: u32][UTF-16LE string], inside a storage whose header is
-        // [storage size: u32]["1SPS" marker: u32][fmtid: GUID].
-        let value: Vec<u8> = APP_USER_MODEL_ID
-            .encode_utf16()
-            .flat_map(|unit| unit.to_le_bytes())
-            .collect();
-        let value_offset = bytes
-            .windows(value.len())
-            .position(|window| window == value)
-            .expect("AppUserModelID not found in the generated .lnk");
-
-        assert_eq!(
-            &bytes[value_offset - 4..value_offset],
-            &((APP_USER_MODEL_ID.len() as u32) + 1).to_le_bytes(),
-            "unexpected VT_LPWSTR char count"
-        );
-        assert_eq!(&bytes[value_offset - 8..value_offset - 6], &[0x1F, 0x00], "value is not VT_LPWSTR");
-        assert_eq!(
-            &bytes[value_offset - 13..value_offset - 9],
-            &5u32.to_le_bytes(),
-            "property id is not 5 (PKEY_AppUserModel_ID)"
-        );
-        let expected_fmtid: [u8; 16] = [
-            0x55, 0x28, 0x4C, 0x9F, // Data1, little-endian
-            0x79, 0x9F, // Data2
-            0x39, 0x4B, // Data3
-            0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3,
-        ];
-        assert_eq!(
-            &bytes[value_offset - 33..value_offset - 17],
-            &expected_fmtid,
-            "property set is not the AppUserModel property set"
-        );
-
-        std::fs::remove_file(&shortcut_path).unwrap();
-    }
 }

@@ -7,6 +7,7 @@ use std::env;
 
 lazy_static_include_bytes! {
     DRAAL => "./assets/draal.exe",
+    DRAAL_ICO => "./assets/draal.ico",
     DRAAL_INI_MSNMSGR => "./assets/draal_msnmsgr.ini",
     DRAAL_INI_CONTACTS => "./assets/draal_contacts.ini",
     EPSILON3 => "./assets/epsilon3.dll",
@@ -23,6 +24,7 @@ pub const UNINSTALLER_EXE_NAME: &str = "tachyon_uninstaller.exe";
 fn msn_msgr_bytes(name: &str) -> &'static [u8] {
     match name {
         "zathras.dll"  => &ZATHRAS,
+        "draal.ico" => &DRAAL_ICO,
         "draal.exe"    => &DRAAL,
         "draal.ini"    => &DRAAL_INI_MSNMSGR,
         "epsilon3.dll" => &EPSILON3,
@@ -84,8 +86,6 @@ impl InstallerFileService {
         log("Conjuring uninstaller.".into());
         write_bytes(path, UNINSTALLER_EXE_NAME, UNINSTALLER_EXE, &log)?;
         progress();
-
-
 
         Ok(())
     }
